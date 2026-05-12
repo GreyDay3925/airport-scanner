@@ -1,0 +1,77 @@
+name: Build & Release DMG
+
+on:
+  push:
+    tags:
+      - "v*"          # triggers on any tag like v1.0, v1.2.3
+  workflow_dispatch:   # lets you trigger a build manually from GitHub Actions UI
+
+jobs:
+  build:
+    runs-on: macos-14   # Apple Silicon runner — fastest Swift build
+
+    steps:
+      # ── Checkout ─────────────────────────────────────────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Build app ────────────────────────────────────────────────────────
+      - name: Build AirportScanner
+        working-directory: artifacts/AirportScanner
+        run: |
+          xcodebuild build \
+            -project AirportScanner.xcodeproj \
+            -scheme AirportScanner \
+            -configuration Release \
+            -derivedDataPath ./build/DerivedData \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=YES \
+            CODE_SIGNING_ALLOWED=YES
+
+      # ── Package DMG ───────────────────────────────────────────────────────
+      - name: Create DMG
+        working-directory: artifacts/AirportScanner
+        run: |
+          APP_PATH=$(find ./build/DerivedData -name "AirportScanner.app" | head -1)
+          mkdir -p build/dmg-staging
+          cp -R "$APP_PATH" build/dmg-staging/
+          ln -s /Applications build/dmg-staging/Applications
+          hdiutil create \
+            -volname "Airport Scanner" \
+            -srcfolder build/dmg-staging \
+            -ov \
+            -format UDZO \
+            build/AirportScanner.dmg
+          echo "DMG created: $(du -sh build/AirportScanner.dmg | cut -f1)"
+
+      # ── Upload as workflow artifact (always available) ────────────────────
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AirportScanner-${{ github.sha }}
+          path: artifacts/AirportScanner/build/AirportScanner.dmg
+          retention-days: 30
+
+      # ── Create GitHub Release (only on version tags) ──────────────────────
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Airport Scanner ${{ github.ref_name }}
+          body: |
+            ## Airport Scanner ${{ github.ref_name }}
+
+            ### Install
+            1. Download **AirportScanner.dmg** below
+            2. Open the DMG and drag **AirportScanner** to your Applications folder
+            3. First launch: **right-click → Open** to bypass Gatekeeper (unsigned build)
+
+            ### What's included
+            - **WiFi Scanner** — see all nearby networks with signal strength, channel, and security info
+            - **Capture Analyzer** — open `.pcap` files to analyse beacon counts, data frames, and channel congestion
+
+            ### Requirements
+            - macOS 13 Ventura or later
+          files: artifacts/AirportScanner/build/AirportScanner.dmg
+          draft: false
+          prerelease: false
